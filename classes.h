@@ -26,16 +26,15 @@ public:
     }
 };
 
-//Dont forget to close the files to avoid mem leaks
+//Don't forget to close the files to avoid mem leaks
 
 class StorageBufferManager {
 
 private:
-    
-    const int BLOCK_SIZE = 4096; // initialize the  block size allowed in main memory according to the question 
+    ofstream employeeRelationFile;
+    const int BLOCK_SIZE = 4096; // initialize the  block size allowed in main memory according to the question
+    int numRecords = 0;
 
-    // You may declare variables based on your need 
-    int numRecords = 1;
 
     // Insert new record 
     void insertRecord(Record record) {
@@ -54,31 +53,57 @@ private:
     }
 
 public:
-    StorageBufferManager(string NewFileName) {
-        
-        //initialize your variables
-        ofstream employeeRelationFile("EmployeeRelation");
+    StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName, ios::binary){
 
         // Create your EmployeeRelation file 
-        if (employeeRelationFile.is_open()) {
-            cout << "The 'EmployeeRelation' file has sucessfully been opened" << endl;
-            
+        if (!employeeRelationFile.is_open()) {
+            throw runtime_error("Error!!! The NewFileName could not be created!");
         }
-        else {
-            cerr << "Error creating the 'EmployeeRelation' file!!!" << endl;
-        }
+
     }
+
+    //destructor to close files and ensure nothing is left.
+    ~StorageBufferManager() {
+        employeeRelationFile.close();
+    }
+
 
     // Read csv file (Employee.csv) and add records to the (EmployeeRelation)
     void createFromFile(string csvFName) {
-        
         ifstream csvFile(csvFName);
-        if (csvFile.is_open()) {
-            cout << "The csvFile was successfully opened!" << endl;
+
+        if (!csvFile.is_open()) {
+            throw runtime_error("Error!!! The csvFile could not be opened!");
         }
-        else {
-            cerr << "Error!!! The csvFile could not be opened!" << endl;
+        //initialize the string to hold the line value
+        string line;
+        //While loop loops through line by line in the csv file
+        while (getline(csvFile, line)) {
+
+            // istringstream ss creates an object that we initialize as a string, we then can use it to perform input
+            // operations such as getline().
+            istringstream ss(line);
+
+            // vector that holds the fields, plural.
+            vector<string> fields;
+            // string that holds one field.
+            string field;
+
+            //inner while loop loops through each value up to the comma.
+            while (getline(ss, field, ',')) {
+                //adding it to the "back" vector fields
+                fields.push_back(field);
+            }
+
+            // The Record constructor is designed to take a vector<string> as an argument, and it initializes
+            // the Record object's fields (id, name, bio, manager_id) based on the contents of this vector.
+            Record record(fields);
+
+            //Once the page is implemented this is where we add to the page.
+            //addRecordToPage(record);
+
         }
+
         
     }
 
