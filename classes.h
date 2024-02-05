@@ -24,6 +24,32 @@ public:
         cout << "\tBIO: " << bio << "\n";
         cout << "\tMANAGER_ID: " << manager_id << "\n";
     }
+
+    vector<char> serialize() const {
+        vector<char> data;
+
+
+        for (int i = 7; i >= 0; --i) {
+            data.push_back((id >> (i * 8)) & 0xFF);
+            data.push_back((manager_id >> (i * 8)) & 0xFF);
+        }
+
+        int nameLength = name.size();
+        int bioLength = bio.size();
+
+        data.push_back((nameLength >> 8) & 0xFF);
+        data.push_back(nameLength & 0xFF);
+
+        data.push_back((bioLength >> 8) & 0xFF);
+        data.push_back(bioLength & 0xFF);
+
+        data.insert(data.end(), name.begin(), name.end());
+        data.insert(data.end(), bio.begin(), bio.end());
+
+        return data;
+    }
+
+
 };
 
 //Don't forget to close the files to avoid mem leaks
@@ -34,22 +60,26 @@ private:
     ofstream employeeRelationFile;
     const int BLOCK_SIZE = 4096; // initialize the  block size allowed in main memory according to the question
     int numRecords = 0;
+    vector<char> currentPage;
 
+    //writing the page to the file.
+    void writePageToFile(){
+        if (!currentPage.empty()){
+            employeeRelationFile.write(&currentPage[0], currentPage.size());
+            currentPage.clear();
+        }
+    }
 
     // Insert new record 
-    void insertRecord(Record record) {
+    void addRecordToPage(Record record) {
+        vector<char> serializedRecord = record.serialize();
+        int recordSize = serializedRecord.size();
 
-        // No records written yet
-        if (numRecords == 0) {
-            // Initialize first block
-
+        if (currentPage.size() + recordSize > BLOCK_SIZE) {
+            writePageToFile();
         }
-        // Add record to the block
 
-
-        // Take neccessary steps if capacity is reached (you've utilized all the blocks in main memory)
-
-
+         currentPage.insert(currentPage.end(), serializedRecord.begin(), serializedRecord.end());
     }
 
 public:
@@ -64,6 +94,7 @@ public:
 
     //destructor to close files and ensure nothing is left.
     ~StorageBufferManager() {
+        writePageToFile();
         employeeRelationFile.close();
     }
 
@@ -100,7 +131,7 @@ public:
             Record record(fields);
 
             //Once the page is implemented this is where we add to the page.
-            //addRecordToPage(record);
+            addRecordToPage(record);
 
         }
 
