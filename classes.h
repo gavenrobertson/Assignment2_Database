@@ -1,9 +1,8 @@
-#include <string>
-#include <vector>
-#include <string>
 #include <iostream>
+#include <fstream>
 #include <sstream>
-#include <bitset>
+#include <vector>
+#include <cstring>
 using namespace std;
 
 class Record {
@@ -18,7 +17,7 @@ public:
         manager_id = stoi(fields[3]);
     }
 
-    void print() {
+    void print() const {
         cout << "\tID: " << id << "\n";
         cout << "\tNAME: " << name << "\n";
         cout << "\tBIO: " << bio << "\n";
@@ -27,119 +26,153 @@ public:
 
     vector<char> serialize() const {
         vector<char> data;
-
-
         for (int i = 7; i >= 0; --i) {
             data.push_back((id >> (i * 8)) & 0xFF);
             data.push_back((manager_id >> (i * 8)) & 0xFF);
         }
-
         int nameLength = name.size();
         int bioLength = bio.size();
-
         data.push_back((nameLength >> 8) & 0xFF);
         data.push_back(nameLength & 0xFF);
-
         data.push_back((bioLength >> 8) & 0xFF);
         data.push_back(bioLength & 0xFF);
-
         data.insert(data.end(), name.begin(), name.end());
         data.insert(data.end(), bio.begin(), bio.end());
-
         return data;
     }
 
+    static Record deserialize(const vector<char>& data, size_t& offset) {
+        int id = 0, manager_id = 0, nameLength = 0, bioLength = 0;
+        for (int i = 7; i >= 0; --i) {
+            id |= (static_cast<int>(data[offset++]) & 0xFF) << (i * 8);
+            manager_id |= (static_cast<int>(data[offset++]) & 0xFF) << (i * 8);
+        }
+        nameLength |= (static_cast<int>(data[offset++]) & 0xFF) << 8;
+        nameLength |= (static_cast<int>(data[offset++]) & 0xFF);
+        bioLength |= (static_cast<int>(data[offset++]) & 0xFF) << 8;
+        bioLength |= (static_cast<int>(data[offset++]) & 0xFF);
+        string name(data.begin() + offset, data.begin() + offset + nameLength);
+        offset += nameLength;
+        string bio(data.begin() + offset, data.begin() + offset + bioLength);
+        offset += bioLength;
+        return Record({to_string(id), name, bio, to_string(manager_id)});
+    }
+};
 
+struct Slot {
+    int offset; // Position in page data array
+    int length; // Length of the record
+};
+
+struct Page {
+    static const int PAGE_SIZE = 4096;
+    char data[PAGE_SIZE];
+    std::vector<Slot> slots;  // Slot directory
+    int freeSpaceOffset;      // Offset for the next record
+
+    Page() : freeSpaceOffset(0) {
+        memset(data, 0, PAGE_SIZE);
+    }
+
+    bool canFit(int recordSize) const {
+        int requiredSpace = recordSize + sizeof(Slot);
+        int availableSpace = PAGE_SIZE - freeSpaceOffset - (slots.size() * sizeof(Slot));
+        return availableSpace >= requiredSpace;
+    }
+
+    void addRecord(const vector<char>& record) {
+        if (!canFit(record.size())) {
+            throw std::runtime_error("Page is full or can't fit the record with the slot");
+        }
+        memcpy(data + freeSpaceOffset, record.data(), record.size());
+        slots.push_back({freeSpaceOffset, static_cast<int>(record.size())});
+        freeSpaceOffset += record.size();
+    }
 };
 
 //Don't forget to close the files to avoid mem leaks
 
 class StorageBufferManager {
-
 private:
     ofstream employeeRelationFile;
-    const int BLOCK_SIZE = 4096; // initialize the  block size allowed in main memory according to the question
-    int numRecords = 0;
+    const int BLOCK_SIZE = 4096;
     vector<char> currentPage;
+    vector<Slot> slots;
 
-    //writing the page to the file.
-    void writePageToFile(){
-        if (!currentPage.empty()){
+    void writePageToFile() {
+        if (!currentPage.empty()) {
+            int numSlots = slots.size();
+            employeeRelationFile.write(reinterpret_cast<const char*>(&numSlots), sizeof(numSlots));
+            for (const Slot& slot : slots) {
+                employeeRelationFile.write(reinterpret_cast<const char*>(&slot), sizeof(slot));
+            }
             employeeRelationFile.write(&currentPage[0], currentPage.size());
             currentPage.clear();
+            slots.clear();
         }
     }
 
-    // Insert new record 
-    void addRecordToPage(Record record) {
+    void addRecordToPage(const Record& record) {
         vector<char> serializedRecord = record.serialize();
         int recordSize = serializedRecord.size();
-
         if (currentPage.size() + recordSize > BLOCK_SIZE) {
             writePageToFile();
+            currentPage.clear();
+            slots.clear();
         }
-
-         currentPage.insert(currentPage.end(), serializedRecord.begin(), serializedRecord.end());
+        currentPage.insert(currentPage.end(), serializedRecord.begin(), serializedRecord.end());
+        slots.push_back({static_cast<int>(currentPage.size() - recordSize), recordSize});
     }
 
 public:
-    StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName, ios::binary){
-
-        // Create your EmployeeRelation file 
+    StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName, ios::binary) {
         if (!employeeRelationFile.is_open()) {
-            throw runtime_error("Error!!! The NewFileName could not be created!");
+            throw runtime_error("Error creating the 'EmployeeRelation' file!!!");
         }
-
     }
 
-    //destructor to close files and ensure nothing is left.
     ~StorageBufferManager() {
         writePageToFile();
         employeeRelationFile.close();
     }
 
-
-    // Read csv file (Employee.csv) and add records to the (EmployeeRelation)
     void createFromFile(string csvFName) {
         ifstream csvFile(csvFName);
-
         if (!csvFile.is_open()) {
-            throw runtime_error("Error!!! The csvFile could not be opened!");
+            throw runtime_error("Error opening the CSV file!");
         }
-        //initialize the string to hold the line value
         string line;
-        //While loop loops through line by line in the csv file
         while (getline(csvFile, line)) {
-
-            // istringstream ss creates an object that we initialize as a string, we then can use it to perform input
-            // operations such as getline().
             istringstream ss(line);
-
-            // vector that holds the fields, plural.
             vector<string> fields;
-            // string that holds one field.
             string field;
-
-            //inner while loop loops through each value up to the comma.
             while (getline(ss, field, ',')) {
-                //adding it to the "back" vector fields
                 fields.push_back(field);
             }
-
-            // The Record constructor is designed to take a vector<string> as an argument, and it initializes
-            // the Record object's fields (id, name, bio, manager_id) based on the contents of this vector.
             Record record(fields);
-
-            //Once the page is implemented this is where we add to the page.
             addRecordToPage(record);
-
         }
-
-        
     }
 
-    // Given an ID, find the relevant record and print it
     Record findRecordById(int id) {
-        
+        ifstream file("EmployeeRelation", ios::binary);
+        while (!file.eof()) {
+            int numSlots;
+            file.read(reinterpret_cast<char*>(&numSlots), sizeof(numSlots));
+            vector<Slot> slots(numSlots);
+            file.read(reinterpret_cast<char*>(&slots[0]), sizeof(Slot) * numSlots);
+
+            for (const Slot& slot : slots) {
+                vector<char> buffer(slot.length);
+                file.seekg(slot.offset, ios::beg);
+                file.read(&buffer[0], slot.length);
+                size_t offset = 0;
+                Record record = Record::deserialize(buffer, offset);
+                if (record.id == id) {
+                    return record;
+                }
+            }
+        }
+        throw std::runtime_error("Record not found");
     }
 };
