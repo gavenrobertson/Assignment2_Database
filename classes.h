@@ -39,7 +39,7 @@ struct Slot {
 struct Page {
     static const int PAGE_SIZE = 4096;
     char data[PAGE_SIZE];
-    std::vector<Slot> slots;  // Create a dynamic slot array
+    vector<Slot> slots;  // Create a dynamic slot array
     int freeSpaceOffset;
 
     // Page constructor that sets up the data array
@@ -80,6 +80,7 @@ private:
     ofstream employeeRelationFile;
     const int BLOCK_SIZE = 4096; // initialize the block size allowed in main memory
     int numRecords = 0;
+    
 
     //  <- Serialize the record info, possibly make a function for this? ->
 
@@ -93,6 +94,10 @@ private:
 
 
 public:
+    // Added vector of pages to make use of when 
+    // searching for a particular record within the pages
+    vector <Page> pages;
+
     StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName, ios::binary){
 
         // Create your EmployeeRelation file 
@@ -148,7 +153,29 @@ public:
     }
 
     // Given an ID, find the relevant record and print it
-    Record findRecordById(int id) {
-        
+    Record* StorageBufferManager::findRecordById(int id) {
+        // First we want to iterate through our pages vector
+    for (auto& page : pages) {
+            // Then within the pages, let's loop through the slots stored as well
+        for (auto& slot : page.slots) { 
+
+            // If a slot is unused then it does not contain the record we're searching for
+            if (!slot.inUse) {
+                continue;
+            } 
+
+             // We can use the slot info to get record data in byte form
+            vector<char> recordData(page.data + slot.offset, page.data + slot.offset + slot.length);
+
+            // We will need to find a way to make use of the serialized data somehow 
+            // that way we can get the record's ID for comparing with our ID parameter
+
+            // Most likely just need to compare the record ID with our given ID
+            // to see if it matches up.
+
+            // Also handle the case we do not contain the given record ID somehow
+        }
     }
+}
+
 };
