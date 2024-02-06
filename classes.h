@@ -26,8 +26,10 @@ public:
 
     vector<char> serialize() const {
         vector<char> data;
-        for (int i = 7; i >= 0; --i) {
+        for (int i = 3; i >= 0; --i) {
             data.push_back((id >> (i * 8)) & 0xFF);
+        }
+        for (int i = 3; i >= 0; --i) {
             data.push_back((manager_id >> (i * 8)) & 0xFF);
         }
         int nameLength = name.size();
@@ -38,10 +40,20 @@ public:
         data.push_back(bioLength & 0xFF);
         data.insert(data.end(), name.begin(), name.end());
         data.insert(data.end(), bio.begin(), bio.end());
+
+        // Logging after serialization
+        cout << "Serializing Record: ID=" << id << ", ManagerID=" << manager_id << endl;
+        cout << "Name Length: " << nameLength << ", Bio Length: " << bioLength << endl;
+        cout << "Total Serialized Size: " << data.size() << " bytes" << endl;
+
         return data;
     }
 
     static Record deserialize(const vector<char>& data, size_t& offset) {
+        if (offset + 16 > data.size()) {  // 16 bytes for id, manager_id, nameLength, bioLength
+            throw runtime_error("Not enough data for header.");
+        }
+
         int id = 0, manager_id = 0, nameLength = 0, bioLength = 0;
         for (int i = 7; i >= 0; --i) {
             id |= (static_cast<int>(data[offset++]) & 0xFF) << (i * 8);
@@ -51,10 +63,16 @@ public:
         nameLength |= (static_cast<int>(data[offset++]) & 0xFF);
         bioLength |= (static_cast<int>(data[offset++]) & 0xFF) << 8;
         bioLength |= (static_cast<int>(data[offset++]) & 0xFF);
+
+        if (offset + nameLength + bioLength > data.size()) {
+            throw runtime_error("Not enough data for name and bio.");
+        }
+
         string name(data.begin() + offset, data.begin() + offset + nameLength);
         offset += nameLength;
         string bio(data.begin() + offset, data.begin() + offset + bioLength);
         offset += bioLength;
+
         return Record({to_string(id), name, bio, to_string(manager_id)});
     }
 };
@@ -156,16 +174,33 @@ public:
 
     Record findRecordById(int id) {
         ifstream file("EmployeeRelation", ios::binary);
+        if (!file.is_open()) {
+            throw runtime_error("Unable to open the file.");
+        }
+
         while (!file.eof()) {
             int numSlots;
             file.read(reinterpret_cast<char*>(&numSlots), sizeof(numSlots));
+            if (file.fail()) {
+                throw runtime_error("Failed to read numSlots.");
+            }
+
             vector<Slot> slots(numSlots);
-            file.read(reinterpret_cast<char*>(&slots[0]), sizeof(Slot) * numSlots);
+            file.read(reinterpret_cast<char*>(slots.data()), sizeof(Slot) * numSlots);
+            if (file.fail()) {
+                throw runtime_error("Failed to read slots.");
+            }
 
             for (const Slot& slot : slots) {
+                if (slot.offset + slot.length > currentPage.size()) {
+                    throw runtime_error("Slot offset or length is out of range.");
+                }
                 vector<char> buffer(slot.length);
                 file.seekg(slot.offset, ios::beg);
                 file.read(&buffer[0], slot.length);
+                if (file.fail()) {
+                    throw runtime_error("Failed to read record data.");
+                }
                 size_t offset = 0;
                 Record record = Record::deserialize(buffer, offset);
                 if (record.id == id) {
@@ -173,6 +208,7 @@ public:
                 }
             }
         }
+
         throw std::runtime_error("Record not found");
     }
 };
