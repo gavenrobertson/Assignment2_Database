@@ -64,32 +64,28 @@ private:
 
     void writePageToFile() {
         if (!currentPage.slots.empty()) {
-            // Write the data
-            employeeRelationFile.write(currentPage.data, currentPage.freeSpaceOffset);
-            // Write the slots information
-            int numSlots = currentPage.slots.size();
-            employeeRelationFile.write(reinterpret_cast<const char*>(&numSlots), sizeof(numSlots));
             for (const Slot& slot : currentPage.slots) {
-                employeeRelationFile.write(reinterpret_cast<const char*>(&slot), sizeof(slot));
+                // Extract each record as a string and write it to the file as a line.
+                string recordStr(currentPage.data + slot.offset, slot.length);
+                employeeRelationFile << recordStr;  // Assuming recordStr ends with a newline.
             }
             currentPage = Page(); // Reset the current page after writing
         }
     }
+
 
     void addRecordToPage(const Record& record) {
         stringstream ss;
         ss << record.id << "," << record.name << "," << record.bio << "," << record.manager_id << "\n";
         string recordStr = ss.str();
 
-        if (!currentPage.canFit(recordStr.size())) {
-            writePageToFile(); // Write current page to file if the record doesn't fit
-        }
-
-        currentPage.addRecord(recordStr); // Add the record to the current page
+        // Write the record directly to the file, in text format
+        employeeRelationFile << recordStr;
     }
 
+
 public:
-    StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName, ios::binary) {
+    StorageBufferManager(string NewFileName) : employeeRelationFile(NewFileName) {
         if (!employeeRelationFile.is_open()) {
             throw runtime_error("Error creating the 'EmployeeRelation' file!!!");
         }
