@@ -23,58 +23,6 @@ public:
         cout << "\tBIO: " << bio << "\n";
         cout << "\tMANAGER_ID: " << manager_id << "\n";
     }
-
-    vector<char> serialize() const {
-        vector<char> data;
-        for (int i = 3; i >= 0; --i) {
-            data.push_back((id >> (i * 8)) & 0xFF);
-        }
-        for (int i = 3; i >= 0; --i) {
-            data.push_back((manager_id >> (i * 8)) & 0xFF);
-        }
-        int nameLength = name.size();
-        int bioLength = bio.size();
-        data.push_back((nameLength >> 8) & 0xFF);
-        data.push_back(nameLength & 0xFF);
-        data.push_back((bioLength >> 8) & 0xFF);
-        data.push_back(bioLength & 0xFF);
-        data.insert(data.end(), name.begin(), name.end());
-        data.insert(data.end(), bio.begin(), bio.end());
-
-        // Logging after serialization
-        cout << "Serializing Record: ID=" << id << ", ManagerID=" << manager_id << endl;
-        cout << "Name Length: " << nameLength << ", Bio Length: " << bioLength << endl;
-        cout << "Total Serialized Size: " << data.size() << " bytes" << endl;
-
-        return data;
-    }
-
-    static Record deserialize(const vector<char>& data, size_t& offset) {
-        if (offset + 16 > data.size()) {  // 16 bytes for id, manager_id, nameLength, bioLength
-            throw runtime_error("Not enough data for header.");
-        }
-
-        int id = 0, manager_id = 0, nameLength = 0, bioLength = 0;
-        for (int i = 7; i >= 0; --i) {
-            id |= (static_cast<int>(data[offset++]) & 0xFF) << (i * 8);
-            manager_id |= (static_cast<int>(data[offset++]) & 0xFF) << (i * 8);
-        }
-        nameLength |= (static_cast<int>(data[offset++]) & 0xFF) << 8;
-        nameLength |= (static_cast<int>(data[offset++]) & 0xFF);
-        bioLength |= (static_cast<int>(data[offset++]) & 0xFF) << 8;
-        bioLength |= (static_cast<int>(data[offset++]) & 0xFF);
-
-        if (offset + nameLength + bioLength > data.size()) {
-            throw runtime_error("Not enough data for name and bio.");
-        }
-
-        string name(data.begin() + offset, data.begin() + offset + nameLength);
-        offset += nameLength;
-        string bio(data.begin() + offset, data.begin() + offset + bioLength);
-        offset += bioLength;
-
-        return Record({to_string(id), name, bio, to_string(manager_id)});
-    }
 };
 
 struct Slot {
@@ -98,48 +46,46 @@ struct Page {
         return availableSpace >= requiredSpace;
     }
 
-    void addRecord(const vector<char>& record) {
-        if (!canFit(record.size())) {
+    void addRecord(const string& record) {
+        int recordSize = record.size();
+        if (!canFit(recordSize)) {
             throw std::runtime_error("Page is full or can't fit the record with the slot");
         }
-        memcpy(data + freeSpaceOffset, record.data(), record.size());
-        slots.push_back({freeSpaceOffset, static_cast<int>(record.size())});
-        freeSpaceOffset += record.size();
+        memcpy(data + freeSpaceOffset, record.c_str(), recordSize);
+        slots.push_back({freeSpaceOffset, recordSize});
+        freeSpaceOffset += recordSize;
     }
 };
-
-//Don't forget to close the files to avoid mem leaks
 
 class StorageBufferManager {
 private:
     ofstream employeeRelationFile;
-    const int BLOCK_SIZE = 4096;
-    vector<char> currentPage;
-    vector<Slot> slots;
+    Page currentPage;  // Current page buffer
 
     void writePageToFile() {
-        if (!currentPage.empty()) {
-            int numSlots = slots.size();
+        if (!currentPage.slots.empty()) {
+            // Write the data
+            employeeRelationFile.write(currentPage.data, currentPage.freeSpaceOffset);
+            // Write the slots information
+            int numSlots = currentPage.slots.size();
             employeeRelationFile.write(reinterpret_cast<const char*>(&numSlots), sizeof(numSlots));
-            for (const Slot& slot : slots) {
+            for (const Slot& slot : currentPage.slots) {
                 employeeRelationFile.write(reinterpret_cast<const char*>(&slot), sizeof(slot));
             }
-            employeeRelationFile.write(&currentPage[0], currentPage.size());
-            currentPage.clear();
-            slots.clear();
+            currentPage = Page(); // Reset the current page after writing
         }
     }
 
     void addRecordToPage(const Record& record) {
-        vector<char> serializedRecord = record.serialize();
-        int recordSize = serializedRecord.size();
-        if (currentPage.size() + recordSize > BLOCK_SIZE) {
-            writePageToFile();
-            currentPage.clear();
-            slots.clear();
+        stringstream ss;
+        ss << record.id << "," << record.name << "," << record.bio << "," << record.manager_id << "\n";
+        string recordStr = ss.str();
+
+        if (!currentPage.canFit(recordStr.size())) {
+            writePageToFile(); // Write current page to file if the record doesn't fit
         }
-        currentPage.insert(currentPage.end(), serializedRecord.begin(), serializedRecord.end());
-        slots.push_back({static_cast<int>(currentPage.size() - recordSize), recordSize});
+
+        currentPage.addRecord(recordStr); // Add the record to the current page
     }
 
 public:
@@ -150,15 +96,16 @@ public:
     }
 
     ~StorageBufferManager() {
-        writePageToFile();
+        writePageToFile();  // Make sure to write the last page to the file
         employeeRelationFile.close();
     }
 
     void createFromFile(string csvFName) {
         ifstream csvFile(csvFName);
         if (!csvFile.is_open()) {
-            throw runtime_error("Error opening the CSV file!");
+            throw runtime_error("Error!!! The csvFile could not be opened!");
         }
+
         string line;
         while (getline(csvFile, line)) {
             istringstream ss(line);
@@ -167,45 +114,38 @@ public:
             while (getline(ss, field, ',')) {
                 fields.push_back(field);
             }
+
             Record record(fields);
             addRecordToPage(record);
         }
     }
 
     Record findRecordById(int id) {
-        ifstream file("EmployeeRelation", ios::binary);
+        cout << "Searching for Record ID: " << id << endl;
+        ifstream file("EmployeeRelation");
         if (!file.is_open()) {
             throw runtime_error("Unable to open the file.");
         }
 
-        while (!file.eof()) {
-            int numSlots;
-            file.read(reinterpret_cast<char*>(&numSlots), sizeof(numSlots));
-            if (file.fail()) {
-                throw runtime_error("Failed to read numSlots.");
+        string line;
+        while (getline(file, line)) {
+            istringstream ss(line);
+            vector<string> fields;
+            string field;
+            while (getline(ss, field, ',')) {
+                fields.push_back(field);
             }
 
-            vector<Slot> slots(numSlots);
-            file.read(reinterpret_cast<char*>(slots.data()), sizeof(Slot) * numSlots);
-            if (file.fail()) {
-                throw runtime_error("Failed to read slots.");
-            }
-
-            for (const Slot& slot : slots) {
-                if (slot.offset + slot.length > currentPage.size()) {
-                    throw runtime_error("Slot offset or length is out of range.");
-                }
-                vector<char> buffer(slot.length);
-                file.seekg(slot.offset, ios::beg);
-                file.read(&buffer[0], slot.length);
-                if (file.fail()) {
-                    throw runtime_error("Failed to read record data.");
-                }
-                size_t offset = 0;
-                Record record = Record::deserialize(buffer, offset);
+            // Ensure that there are enough fields for a record
+            if (fields.size() >= 4) {
+                Record record(fields);
+                cout << "Checking Record: ID=" << record.id << endl;
                 if (record.id == id) {
+                    cout << "Found Record: ID=" << record.id << endl;
                     return record;
                 }
+            } else {
+                cout << "Invalid record format: " << line << endl;
             }
         }
 
